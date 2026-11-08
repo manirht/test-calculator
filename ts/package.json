@@ -1,0 +1,17 @@
+{
+  "name": "calc-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Command line and REPL front end for the calc engine",
+  "bin": { "calc-ui": "dist/cli.js" },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "tsc -p . && node --test dist/test/",
+    "start": "node dist/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.2",
+    "typescript": "5.4.5"
+  }
+}

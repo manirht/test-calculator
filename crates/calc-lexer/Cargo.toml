@@ -1,0 +1,6 @@
+[package]
+name = "calc-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tokenizer for calculator expressions"

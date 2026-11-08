@@ -1,0 +1,10 @@
+[package]
+name = "calc-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Exact rational evaluator with a Python bridge for statistics and finance"
+
+[dependencies]
+calc-parser = { path = "../calc-parser" }
+serde_json = "1"
