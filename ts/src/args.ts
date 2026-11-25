@@ -1,3 +1,5 @@
+import { MAX_PLACES, MODES } from "./commands.js";
+
 export interface Args {
   expr?: string;
   places?: number;
@@ -10,7 +12,6 @@ export interface Args {
 }
 
 export const DEFAULT_BIN = "calc";
-const MAX_PLACES = 30;
 
 export function parseArgs(argv: string[], env: Record<string, string | undefined> = {}): Args {
   const args: Args = { bin: env.CALC_BIN ?? DEFAULT_BIN, noHistory: false, help: false };
@@ -50,6 +51,9 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
       case "--mode": {
         const v = value();
         if (v === undefined) return { ...args, error: "--mode needs a value" };
+        if (!(MODES as readonly string[]).includes(v)) {
+          return { ...args, error: `--mode must be ${MODES.join("|")}` };
+        }
         args.mode = v;
         break;
       }

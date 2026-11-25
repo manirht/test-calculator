@@ -216,40 +216,21 @@ impl Rational {
     pub fn round_units(&self, places: u32, mode: RoundMode) -> Result<i128, EvalError> {
         let scaled = self.mul(Rational::from_int(pow10(places)?))?;
         let (n, d) = (scaled.num, scaled.den);
-        let q = n.div_euclid(d);
-        let rem = n - q * d;
-        let twice = rem.checked_mul(2).ok_or_else(overflow)?;
-        Ok(match mode {
-            RoundMode::Truncate => {
-                if n < 0 && rem > 0 {
-                    q + 1
-                } else {
-                    q
-                }
-            }
-            RoundMode::HalfUp => match twice.cmp(&d) {
-                Ordering::Greater => q + 1,
-                Ordering::Less => q,
-                Ordering::Equal => {
-                    if n >= 0 {
-                        q + 1
-                    } else {
-                        q
-                    }
-                }
-            },
-            RoundMode::HalfEven => match twice.cmp(&d) {
-                Ordering::Greater => q + 1,
-                Ordering::Less => q,
-                Ordering::Equal => {
-                    if q % 2 == 0 {
-                        q
-                    } else {
-                        q + 1
-                    }
-                }
-            },
-        })
+        // Truncate first so the quotient product never has to fall below i128::MIN.
+        let q = n / d;
+        let rem = (n % d).abs();
+        // Compare 2 * rem with d without overflowing when the denominator is large.
+        let half = rem.cmp(&(d - rem));
+        let increment = match mode {
+            RoundMode::Truncate => false,
+            RoundMode::HalfUp => half != Ordering::Less,
+            RoundMode::HalfEven => half == Ordering::Greater || (half == Ordering::Equal && q % 2 != 0),
+        };
+        if increment {
+            q.checked_add(n.signum()).ok_or_else(overflow)
+        } else {
+            Ok(q)
+        }
     }
 
     /// Decimal text with at most `places` fractional digits and no trailing zeros.
@@ -301,7 +282,8 @@ fn parse_decimal(text: &str) -> Result<Rational, EvalError> {
         return Err(bad());
     }
     let value: i128 = digits.parse().map_err(|_| overflow())?;
-    let exp10 = exp - frac_part.len() as i32;
+    let frac_len = i32::try_from(frac_part.len()).map_err(|_| overflow())?;
+    let exp10 = exp.checked_sub(frac_len).ok_or_else(overflow)?;
     let value = if negative { -value } else { value };
     if exp10 >= 0 {
         let scale = pow10(u32::try_from(exp10).map_err(|_| overflow())?)?;
@@ -438,6 +420,34 @@ mod tests {
     fn integers_print_as_is() {
         assert_eq!(r(7, 1).to_decimal(0, RoundMode::HalfUp).unwrap(), "7");
         assert_eq!(r(-12, 1).to_decimal(3, RoundMode::Truncate).unwrap(), "-12");
+    }
+
+    #[test]
+    fn extreme_decimal_exponents_return_overflow() {
+        for input in ["0.1e-2147483648", "0.01e-2147483647"] {
+            assert_eq!(Rational::parse(input).unwrap_err().code, ErrorCode::Overflow);
+        }
+    }
+
+    #[test]
+    fn rounding_large_negative_values_does_not_overflow_intermediates() {
+        let value = r(-i128::MAX, 3);
+        assert_eq!(
+            value.round_units(0, RoundMode::HalfUp).unwrap(),
+            -56_713_727_820_156_410_577_229_101_238_628_035_242
+        );
+    }
+
+    #[test]
+    fn rounding_large_remainders_does_not_require_doubling_them() {
+        let value = r(i128::MAX / 2 + 1, i128::MAX);
+        assert_eq!(value.round_units(0, RoundMode::HalfUp).unwrap(), 1);
+        assert_eq!(value.round_units(0, RoundMode::HalfEven).unwrap(), 1);
+        assert_eq!(value.round_units(0, RoundMode::Truncate).unwrap(), 0);
+        assert_eq!(
+            value.neg().unwrap().round_units(0, RoundMode::HalfUp).unwrap(),
+            -1
+        );
     }
 
     #[test]

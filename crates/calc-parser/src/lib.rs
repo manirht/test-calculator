@@ -9,6 +9,10 @@ use std::fmt;
 /// Nesting limit; deeper input is rejected instead of overflowing the stack.
 pub const MAX_DEPTH: usize = 200;
 
+/// Bound the tree depth as well as recursive syntax nesting. Flat operator chains
+/// can form deep trees, whose evaluation, formatting and destruction use the stack.
+const MAX_TREE_DEPTH: usize = 512;
+
 const ADD_BP: (u8, u8) = (10, 11);
 const MUL_BP: (u8, u8) = (20, 21);
 const PREFIX_BP: u8 = 25;
@@ -190,15 +194,33 @@ pub fn parse(input: &str) -> Result<Expr, ParseError> {
         };
         parser.advance();
         let value = parser.parse_expr(0)?;
-        Expr::Assign {
-            name,
-            value: Box::new(value),
-        }
+        ParsedExpr::new(
+            Expr::Assign {
+                name,
+                value: Box::new(value.expr),
+            },
+            value.height + 1,
+        )?
+        .expr
     } else {
-        parser.parse_expr(0)?
+        parser.parse_expr(0)?.expr
     };
     parser.expect_eof()?;
     Ok(expr)
+}
+
+struct ParsedExpr {
+    expr: Expr,
+    height: usize,
+}
+
+impl ParsedExpr {
+    fn new(expr: Expr, height: usize) -> Result<Self, ParseError> {
+        if height > MAX_TREE_DEPTH {
+            return Err(ParseError::TooDeep);
+        }
+        Ok(Self { expr, height })
+    }
 }
 
 struct Parser {
@@ -252,7 +274,7 @@ impl Parser {
         }
     }
 
-    fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+    fn parse_expr(&mut self, min_bp: u8) -> Result<ParsedExpr, ParseError> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             return Err(ParseError::TooDeep);
@@ -262,32 +284,38 @@ impl Parser {
         result
     }
 
-    fn parse_expr_inner(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+    fn parse_expr_inner(&mut self, min_bp: u8) -> Result<ParsedExpr, ParseError> {
         let tok = self.advance();
         let mut lhs = match tok.kind.clone() {
-            TokenKind::Number(text) => Expr::Number(text),
+            TokenKind::Number(text) => ParsedExpr::new(Expr::Number(text), 1)?,
             TokenKind::Ident(name) => {
                 if matches!(self.peek().kind, TokenKind::LParen) {
                     self.advance();
-                    let args = self.parse_args()?;
-                    Expr::Call { name, args }
+                    let (args, height) = self.parse_args()?;
+                    ParsedExpr::new(Expr::Call { name, args }, height + 1)?
                 } else {
-                    Expr::Var(name)
+                    ParsedExpr::new(Expr::Var(name), 1)?
                 }
             }
             TokenKind::Minus => {
                 let inner = self.parse_expr(PREFIX_BP)?;
-                Expr::Unary {
-                    op: UnOp::Neg,
-                    expr: Box::new(inner),
-                }
+                ParsedExpr::new(
+                    Expr::Unary {
+                        op: UnOp::Neg,
+                        expr: Box::new(inner.expr),
+                    },
+                    inner.height + 1,
+                )?
             }
             TokenKind::Plus => {
                 let inner = self.parse_expr(PREFIX_BP)?;
-                Expr::Unary {
-                    op: UnOp::Pos,
-                    expr: Box::new(inner),
-                }
+                ParsedExpr::new(
+                    Expr::Unary {
+                        op: UnOp::Pos,
+                        expr: Box::new(inner.expr),
+                    },
+                    inner.height + 1,
+                )?
             }
             TokenKind::LParen => {
                 let inner = self.parse_expr(0)?;
@@ -304,7 +332,7 @@ impl Parser {
                     break;
                 }
                 self.advance();
-                lhs = Expr::Factorial(Box::new(lhs));
+                lhs = ParsedExpr::new(Expr::Factorial(Box::new(lhs.expr)), lhs.height + 1)?;
                 continue;
             }
             let (op, (l_bp, r_bp)) = match kind {
@@ -321,27 +349,34 @@ impl Parser {
             }
             self.advance();
             let rhs = self.parse_expr(r_bp)?;
-            lhs = Expr::Binary {
-                op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-            };
+            let height = lhs.height.max(rhs.height) + 1;
+            lhs = ParsedExpr::new(
+                Expr::Binary {
+                    op,
+                    lhs: Box::new(lhs.expr),
+                    rhs: Box::new(rhs.expr),
+                },
+                height,
+            )?;
         }
         Ok(lhs)
     }
 
-    fn parse_args(&mut self) -> Result<Vec<Expr>, ParseError> {
+    fn parse_args(&mut self) -> Result<(Vec<Expr>, usize), ParseError> {
         let mut args = Vec::new();
+        let mut height = 0;
         if matches!(self.peek().kind, TokenKind::RParen) {
             self.advance();
-            return Ok(args);
+            return Ok((args, height));
         }
         loop {
-            args.push(self.parse_expr(0)?);
+            let arg = self.parse_expr(0)?;
+            height = height.max(arg.height);
+            args.push(arg.expr);
             let tok = self.advance();
             match tok.kind {
                 TokenKind::Comma => continue,
-                TokenKind::RParen => return Ok(args),
+                TokenKind::RParen => return Ok((args, height)),
                 _ => return Err(self.unexpected(&tok)),
             }
         }
@@ -478,6 +513,24 @@ mod tests {
         assert!(parse(&ok).is_ok());
         let deep = format!("{}1{}", "(".repeat(5000), ")".repeat(5000));
         assert_eq!(parse(&deep).unwrap_err(), ParseError::TooDeep);
+    }
+
+    #[test]
+    fn flat_tree_limit_has_a_safe_boundary() {
+        let sum = std::iter::repeat_n("1", MAX_TREE_DEPTH)
+            .collect::<Vec<_>>()
+            .join("+");
+        assert_eq!(show(&sum), sum);
+        assert_eq!(parse(&format!("{sum}+1")).unwrap_err(), ParseError::TooDeep);
+        assert_eq!(parse(&format!("x = {sum}")).unwrap_err(), ParseError::TooDeep);
+        assert_eq!(parse(&format!("f({sum})")).unwrap_err(), ParseError::TooDeep);
+    }
+
+    #[test]
+    fn postfix_tree_limit_has_a_safe_boundary() {
+        let postfix = format!("1{}", "!".repeat(MAX_TREE_DEPTH - 1));
+        assert_eq!(show(&postfix), postfix);
+        assert_eq!(parse(&format!("{postfix}!")).unwrap_err(), ParseError::TooDeep);
     }
 
     #[test]

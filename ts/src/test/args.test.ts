@@ -41,3 +41,10 @@ test("errors", () => {
   assert.match(parseArgs(["--nope"]).error ?? "", /unknown option/);
   assert.match(parseArgs(["1", "2"]).error ?? "", /unexpected argument/);
 });
+
+test("an invalid rounding mode is refused before starting an unusable session", () => {
+  assert.match(parseArgs(["--mode", "sideways"]).error ?? "", /--mode/);
+  assert.equal(parseArgs(["--mode", "half-up"]).mode, "half-up");
+  assert.equal(parseArgs(["--mode", "half-even"]).mode, "half-even");
+  assert.equal(parseArgs(["--mode", "truncate"]).mode, "truncate");
+});

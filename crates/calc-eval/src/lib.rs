@@ -48,9 +48,11 @@ impl Calculator {
 
     pub fn eval_line_with(&mut self, input: &str, options: FormatOptions) -> Result<Evaluation, EvalError> {
         let expr = calc_parser::parse(input)?;
-        let value = eval::eval(&expr, &mut self.env, self.bridge.as_mut())?;
+        let mut next_env = self.env.clone();
+        let value = eval::eval(&expr, &mut next_env, self.bridge.as_mut())?;
         let text = format::format_value(&value, &options)?;
-        self.env.set_ans(value);
+        next_env.set_ans(value);
+        self.env = next_env;
         Ok(Evaluation {
             value,
             text,
@@ -93,6 +95,15 @@ mod tests {
     }
 
     #[test]
+    fn flat_sums_up_to_the_tree_limit_are_supported() {
+        let mut c = calc();
+        for (terms, expected) in [(300, "300"), (512, "512")] {
+            let input = std::iter::repeat_n("1", terms).collect::<Vec<_>>().join("+");
+            assert_eq!(c.eval_line(&input).unwrap().exact, expected);
+        }
+    }
+
+    #[test]
     fn ans_tracks_the_last_result() {
         let mut c = calc();
         assert_eq!(c.eval_line("ans").unwrap_err().code, ErrorCode::UnknownVar);
@@ -107,6 +118,29 @@ mod tests {
         c.eval_line("5").unwrap();
         assert!(c.eval_line("1/0").is_err());
         assert_eq!(c.eval_line("ans").unwrap().text, "5");
+    }
+
+    #[test]
+    fn formatting_failure_keeps_existing_variable_value() {
+        let mut c = calc();
+        c.eval_line("x = 5").unwrap();
+        let thirty = FormatOptions::new(30, RoundMode::HalfUp).unwrap();
+        assert_eq!(
+            c.eval_line_with("x = 123456789012/7", thirty).unwrap_err().code,
+            ErrorCode::Overflow
+        );
+        assert_eq!(c.eval_line("x").unwrap().exact, "5");
+    }
+
+    #[test]
+    fn formatting_failure_does_not_create_a_variable() {
+        let mut c = calc();
+        let thirty = FormatOptions::new(30, RoundMode::HalfUp).unwrap();
+        assert_eq!(
+            c.eval_line_with("x = 123456789012/7", thirty).unwrap_err().code,
+            ErrorCode::Overflow
+        );
+        assert_eq!(c.eval_line("x").unwrap_err().code, ErrorCode::UnknownVar);
     }
 
     #[test]

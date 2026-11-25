@@ -40,21 +40,26 @@ async function main(argv: string[]): Promise<number> {
     } catch {
       // Completion is a convenience; the session still works without it.
     }
+    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     const rl = createInterface({
       input: process.stdin,
       output: process.stdout,
+      terminal: interactive,
       prompt: "> ",
       completer: (line: string) => {
         const { start, candidates } = complete(line, names);
         return [candidates, line.slice(start)];
       },
     });
-    rl.prompt();
+    let inputClosed = false;
+    rl.once("close", () => { inputClosed = true; });
+    const prompt = () => { if (interactive && !inputClosed) rl.prompt(); };
+    prompt();
     for await (const line of rl) {
       const output = await repl.handleLine(line);
       if (output.text) console.log(output.text);
       if (output.quit) break;
-      rl.prompt();
+      prompt();
     }
     rl.close();
     if (!args.noHistory) saveHistory(historyFile, history);
