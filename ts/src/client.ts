@@ -65,10 +65,15 @@ export class CalcClient {
   }
 
   private handleExit(transport: Transport): void {
-    if (this.transport === transport) this.transport = null;
+    if (this.transport !== transport) return;
+    this.transport = null;
+    this.rejectPending(new CalcError("EXITED", "the calc process exited"));
+  }
+
+  private rejectPending(error: CalcError): void {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(new CalcError("EXITED", "the calc process exited"));
+      pending.reject(error);
     }
     this.pending.clear();
   }
@@ -107,8 +112,10 @@ export class CalcClient {
   }
 
   close(): void {
-    this.transport?.close();
+    const transport = this.transport;
     this.transport = null;
+    this.rejectPending(new CalcError("CLOSED", "the calc client was closed"));
+    transport?.close();
   }
 }
 

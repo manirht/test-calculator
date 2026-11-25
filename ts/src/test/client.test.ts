@@ -98,3 +98,28 @@ test("a reply without a value is a protocol error", async () => {
   await assert.rejects(client.evaluate("1"), (error: unknown) => error instanceof CalcError && error.code === "PROTOCOL");
   client.close();
 });
+
+test("closing a client promptly rejects requests still waiting for a reply", async () => {
+  const client = new CalcClient(() => new FakeTransport(), 100);
+  const pending = client.evaluate("1+1");
+  const rejected = assert.rejects(pending, (error: unknown) => error instanceof CalcError && error.code === "CLOSED");
+  client.close();
+  await rejected;
+});
+
+test("a late exit from a closed transport cannot reject a new transport's request", async () => {
+  const oldTransport = new FakeTransport((request) => ok(request, "2"));
+  const newTransport = new FakeTransport();
+  const transports = [oldTransport, newTransport];
+  const client = new CalcClient(() => transports.shift()!, 500);
+  assert.equal((await client.evaluate("1+1")).value, "2");
+  client.close();
+  const next = client.evaluate("2+2");
+  oldTransport.exit();
+  newTransport.emit(JSON.stringify({ id: 2, ok: true, value: "4", exact: "4" }));
+  try {
+    assert.equal((await next).value, "4");
+  } finally {
+    client.close();
+  }
+});
