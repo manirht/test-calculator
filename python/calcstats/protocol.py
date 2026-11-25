@@ -57,6 +57,8 @@ def handle_request(request):
         if not isinstance(request, dict):
             raise CalcError("BAD_REQUEST", "request must be a JSON object")
         name = request.get("fn")
+        if not isinstance(name, str):
+            raise CalcError("BAD_REQUEST", "'fn' must be a string")
         function = FUNCTIONS.get(name)
         if function is None:
             raise CalcError("UNKNOWN_FUNC", f"unknown function {name!r}")

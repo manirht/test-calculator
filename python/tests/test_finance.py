@@ -61,6 +61,63 @@ class CashFlows(unittest.TestCase):
         with self.assertRaises(CalcError):
             finance.irr(F(100), F(50))
 
+    def test_irr_finds_roots_outside_the_old_rate_bracket(self):
+        for flows, expected in (
+            ((-1, 12), F(11)),
+            ((-1000, 1), F(-999, 1000)),
+            # Growth polynomials -y^2 + 144 and -1000000*y^2 + 1.
+            ((-1, 0, 144), F(11)),
+            ((-1000000, 0, 1), F(-999, 1000)),
+            ((-1, 0, 10**40), F(10**20 - 1)),
+        ):
+            with self.subTest(flows=flows):
+                self.assertEqual(finance.irr(*(F(x) for x in flows)), expected)
+
+    def test_irr_accepts_one_distinct_repeated_root(self):
+        # -(y-1)^2, then (y^2-2)^2: only one positive growth factor each.
+        self.assertEqual(finance.irr(F(-1), F(2), F(-1)), 0)
+        self.assertEqual(finance.irr(F(1), F(0), F(-4), F(0), F(4)), F(414213562373, 10**12))
+
+    def test_irr_rejects_ambiguous_positive_growth_roots(self):
+        # (y-1)(y-2), then (y-1)^2(y-2): rates 0 and 1 both solve NPV=0.
+        for flows in ((1, -3, 2), (1, -4, 5, -2)):
+            with self.subTest(flows=flows):
+                with self.assertRaises(CalcError) as ctx:
+                    finance.irr(*(F(x) for x in flows))
+                self.assertEqual(ctx.exception.code, "DOMAIN")
+
+    def test_irr_rejects_mixed_cashflows_without_a_real_rate(self):
+        # y^2-y+1 = (y-1/2)^2 + 3/4 never vanishes.
+        with self.assertRaises(CalcError) as ctx:
+            finance.irr(F(1), F(-1), F(1))
+        self.assertEqual(ctx.exception.code, "DOMAIN")
+
+    def test_irr_keeps_unique_nonconventional_roots(self):
+        # (1-y)(y^2+1) has exactly one positive root, despite three sign changes.
+        self.assertEqual(finance.irr(F(-1), F(1), F(-1), F(1)), 0)
+        self.assertEqual(finance.irr(F(0), F(-100), F(110), F(0)), F(1, 10))
+
+    def test_irr_rounds_exact_halfway_rates_to_even(self):
+        denominator = 2 * 10**12
+        for numerator, expected in ((1, F(0)), (3, F(2, 10**12))):
+            # -d^2*y^2 + (d+n)^2 has growth factor 1+n/d.
+            with self.subTest(numerator=numerator):
+                self.assertEqual(
+                    finance.irr(F(-denominator**2), F(0), F((denominator + numerator)**2)),
+                    expected,
+                )
+
+    def test_irr_rejects_work_beyond_its_resource_budget(self):
+        for flows in (
+            [F(-1)] + [F(1)] * 1024,
+            [F((-1)**i) for i in range(34)],
+            [F(-1), F(2**513)],
+        ):
+            with self.subTest(count=len(flows)):
+                with self.assertRaises(CalcError) as ctx:
+                    finance.irr(*flows)
+                self.assertEqual(ctx.exception.code, "DOMAIN")
+
 
 if __name__ == "__main__":
     unittest.main()

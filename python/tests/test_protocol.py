@@ -1,5 +1,8 @@
 import io
 import json
+from pathlib import Path
+import subprocess
+import sys
 import unittest
 from fractions import Fraction as F
 
@@ -59,12 +62,63 @@ class Requests(unittest.TestCase):
         self.assertEqual(handle_request([1, 2])["error"]["code"], "BAD_REQUEST")
         self.assertEqual(handle_request({"id": 1, "fn": "mean", "args": "x"})["error"]["code"], "BAD_REQUEST")
 
+    def test_function_name_must_be_a_string(self):
+        for name in ([], {}, 1, True, None):
+            with self.subTest(name=name):
+                reply = handle_request({"id": 1, "fn": name, "args": []})
+                self.assertEqual(reply["error"]["code"], "BAD_REQUEST")
+
     def test_every_registered_function_is_callable_by_name(self):
         self.assertIn("percentile", protocol.FUNCTIONS)
         self.assertIn("irr", protocol.FUNCTIONS)
 
 
 class Serve(unittest.TestCase):
+    def test_worker_bounds_sparse_and_large_growth_irr_work(self):
+        # y**1023 = 2**k has root 2**(k/1023), close to1 even for k=511.
+        # Expected rates below are independently rounded from that expression.
+        requests = [
+            {"id": 1, "fn": "irr", "args": ["-1"] + ["0"] * 1022 + [str(2**126)]},
+            {"id": 2, "fn": "irr", "args": ["-1"] + ["0"] * 1022 + [str(2**511)]},
+            # -y**1023 + 2**126*y**1022 + 1 needs excessive intermediate integers.
+            {"id": 3, "fn": "irr", "args": ["-1", str(2**126)] + ["0"] * 1021 + ["1"]},
+            {"id": 4, "fn": "mean", "args": ["2", "4"]},
+        ]
+        worker = subprocess.run(
+            [sys.executable, "-m", "calcstats"],
+            cwd=Path(__file__).resolve().parents[1],
+            input="".join(json.dumps(request) + "\n" for request in requests),
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(worker.returncode, 0, worker.stderr)
+        replies = [json.loads(line) for line in worker.stdout.splitlines()]
+        self.assertEqual([reply["id"] for reply in replies], [1, 2, 3, 4])
+        self.assertEqual(F(replies[0]["value"]), F(89123197447, 10**12))
+        self.assertEqual(F(replies[1]["value"]), F(413734533969, 10**12))
+        self.assertEqual(replies[2]["error"]["code"], "DOMAIN")
+        self.assertEqual(replies[3], {"id": 4, "ok": True, "value": "3"})
+
+    def test_worker_survives_invalid_names_and_finance_domain_errors(self):
+        requests = [
+            {"id": 1, "fn": [], "args": []},
+            {"id": 2, "fn": "pv", "args": ["-1", "3", "100"]},
+            {"id": 3, "fn": "fv", "args": ["-1", "3", "100"]},
+            {"id": 4, "fn": "npv", "args": ["-1", "10", "20"]},
+            {"id": 5, "fn": "mean", "args": ["2", "4"]},
+        ]
+        worker = subprocess.run(
+            [sys.executable, "-m", "calcstats"],
+            cwd=Path(__file__).resolve().parents[1],
+            input="".join(json.dumps(request) + "\n" for request in requests),
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(worker.returncode, 0, worker.stderr)
+        replies = [json.loads(line) for line in worker.stdout.splitlines()]
+        self.assertEqual([reply["id"] for reply in replies], [1, 2, 3, 4, 5])
+        self.assertEqual([reply["error"]["code"] for reply in replies[:4]],
+                         ["BAD_REQUEST", "DOMAIN", "DOMAIN", "DOMAIN"])
+        self.assertEqual(replies[4], {"id": 5, "ok": True, "value": "3"})
+
     def test_one_reply_per_line(self):
         lines = [
             json.dumps({"id": 1, "fn": "mean", "args": ["2", "4"]}),
