@@ -31,6 +31,19 @@ Expression language: `+ - * / %` (floored modulo), `^` (right associative, `-2^2
 variables (`x = 5`, names are case-sensitive), `ans`, constants `pi` and `e` (15 significant digits), and the
 functions listed by `:help`. Error positions are byte offsets into the UTF-8 input.
 
+The default display uses ten decimal places; `--places` changes display precision without
+changing the exact rational value. `^` denotes exponentiation. Syntax nesting is limited to
+200 levels and expression-tree height to 512; larger expressions return `TOO_DEEP`. A flat
+300-term sum is supported. Failed evaluation or formatting preserves variables and `ans`.
+
+`irr` returns the sole distinct rate greater than -1, rounded to twelve decimal places with
+ties to even. A repeated root is accepted if it is the only admissible rate; multiple rates,
+no rate, or a calculation exceeding the supported size return `DOMAIN`. The
+[IRR implementation](python/calcstats/finance.py) documents its calculation-size limits.
+
+When input is piped into `calc-ui`, it processes every line without interactive prompts.
+One-shot expression failures exit with status 1; invalid command-line options exit with status 2.
+
 ## Test it
 
 ```sh
