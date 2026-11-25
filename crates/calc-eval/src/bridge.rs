@@ -194,6 +194,29 @@ mod tests {
     }
 
     #[test]
+    fn killed_python_helper_is_restarted_on_the_next_call() {
+        if !Command::new("python3")
+            .arg("--version")
+            .output()
+            .is_ok_and(|out| out.status.success())
+        {
+            return;
+        }
+        let mut bridge = PythonBridge::new();
+        let args = [
+            Rational::from_int(1),
+            Rational::from_int(2),
+            Rational::from_int(3),
+        ];
+        assert_eq!(bridge.call("mean", &args).unwrap(), Rational::from_int(2));
+        let session = bridge.session.as_mut().unwrap();
+        session.child.kill().unwrap();
+        session.child.wait().unwrap();
+        assert_eq!(bridge.call("mean", &args).unwrap_err().code, ErrorCode::External);
+        assert_eq!(bridge.call("mean", &args).unwrap(), Rational::from_int(2));
+    }
+
+    #[test]
     fn missing_interpreter_is_an_external_error() {
         let mut bridge = PythonBridge::new();
         bridge.python = "definitely-not-a-python-binary".to_string();

@@ -127,3 +127,22 @@ fn python_results_feed_back_into_expressions() {
     assert_eq!(replies[1]["value"], "90");
     assert_eq!(replies[2]["value"], "2.1381");
 }
+
+#[test]
+fn very_long_flat_sums_return_a_limit_error_and_keep_the_session_alive() {
+    let expr = std::iter::repeat_n("1", 50_000).collect::<Vec<_>>().join("+");
+    let first = serde_json::json!({"id": 1, "expr": expr}).to_string();
+    let replies = session(&[&first, r#"{"id":2,"expr":"6*7"}"#]);
+    assert_eq!(replies.len(), 2);
+    assert_eq!(replies[0]["error"]["code"], "TOO_DEEP");
+    assert_eq!(replies[1]["exact"], "42");
+}
+
+#[test]
+fn very_long_postfix_chains_return_a_limit_error_and_keep_the_session_alive() {
+    let first = serde_json::json!({"id": 1, "expr": format!("1{}", "!".repeat(50_000))}).to_string();
+    let replies = session(&[&first, r#"{"id":2,"expr":"6*7"}"#]);
+    assert_eq!(replies.len(), 2);
+    assert_eq!(replies[0]["error"]["code"], "TOO_DEEP");
+    assert_eq!(replies[1]["exact"], "42");
+}
